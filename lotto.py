@@ -1,12 +1,8 @@
 # ------------------- 라이브러리 임포트 -------------------
 import streamlit as st
-import random
 import requests
-import re
-import plotly.graph_objects as go
 import pandas as pd
 from bs4 import BeautifulSoup
-from datetime import datetime
 import os
 
 CSV_PATH = "lotto_data.csv"
