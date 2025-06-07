@@ -21,7 +21,7 @@ def getLottoNumber(draw_number):
 
 # ------------------- 최신 회차 번호 가져오기 -------------------
 def get_latest_round_number():
-    url = "https://dhlottery.co.kr/common.do?method=main"
+    url = "https://dhlottery.co.kr/common.do?method=main&mainMode=default"
     try:
         html = requests.get(url).text
         soup = BeautifulSoup(html, "html.parser")
