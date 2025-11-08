@@ -73,6 +73,30 @@ def highlight_matches(val):
         return "color: red; font-weight: bold;"
     return ""
 
+
+# ------------------- 최근 N회 출현 빈도표 계산 -------------------
+def top_numbers_by_recent(df: pd.DataFrame, recent_n: int) -> pd.DataFrame:
+    if df.empty:
+        return pd.DataFrame(columns=["번호", "출현횟수", "등장비율(%)"])
+    # 최신 회차부터 recent_n개 추출
+    recent_df = df.sort_values("회차", ascending=False).head(recent_n)
+    # 번호1~번호6 펼쳐서 빈도 계산
+    nums = recent_df[[f"번호{i}" for i in range(1, 7)]].values.ravel()
+    s = pd.Series(nums, dtype="int64")
+    counts = s.value_counts().sort_index()  # 번호 오름차 정렬 후
+    # 출현횟수 기준 내림차 + 번호 오름차 정렬
+    out = counts.reset_index()
+    out.columns = ["번호", "출현횟수"]
+    out["등장비율(%)"] = (out["출현횟수"] / (recent_n * 6) * 100).round(2)
+    out = out.sort_values(["출현횟수", "번호"], ascending=[False, True]).reset_index(drop=True)
+    return out
+
+# 공용: 최신 데이터 준비(필요 시)
+def ensure_latest_df():
+    df = load_lotto_data()
+    df = update_latest_lotto_data(df)
+    return df
+
     
 # ------------------- Streamlit UI 시작 -------------------
 LAST_ROUND = get_latest_round_number()
@@ -83,57 +107,82 @@ st.set_page_config(page_title="로또 중복수 찾기", layout="wide")
 if 'combinations' not in st.session_state:
     st.session_state.combinations = []
 
-st.sidebar.header("현재 최신 회차")
-st.sidebar.write(f"{LAST_ROUND}회차")
+# ✅ 사이드바 내부 탭 UI
+with st.sidebar:
+    st.header("현재 최신 회차")
+    st.write(f"{LAST_ROUND}회차")
 
-fixed_numbers = st.sidebar.multiselect(
-    "번호 선택", options=list(range(1, 46)), default=[]
-)
+    tab_dup, tab_reg = st.tabs(["🔁 중복수", "↩️ 회귀수"])
 
-if st.sidebar.button("로또 중복수 체크"):
+    with tab_dup:
+        fixed_numbers = st.multiselect("번호 선택", options=list(range(1, 46)), default=[])
+        dup_button = st.button("로또 중복수 체크", key="btn_dup_check")
+        if dup_button:
+            # ▶ 중복수만 보이도록 모드 전환
+            st.session_state.show_mode = "dup"
+
+    with tab_reg:
+        st.subheader("회귀수 분석")
+        st.caption("최근 10·20·30회에서 많이 나온 번호를 내림차순으로 보여줍니다.")
+        reg_button = st.button("회귀수 분석 실행", key="btn_reg_check")
+        if reg_button:
+            # ▶ 회귀수만 보이도록 모드 전환
+            st.session_state.show_mode = "reg"
+
+
+
+# ✅ 버튼 누르면 본문에 결과 출력
+if st.session_state.get("show_mode") == "dup":
     if not fixed_numbers:
         st.error("번호를 선택해주세요.")
     else:
-        df = load_lotto_data()
-        df = update_latest_lotto_data(df)
-
+        df = ensure_latest_df()
         st.session_state.combinations = df[[f"번호{i}" for i in range(1, 7)]].values.tolist()
 
-        # ✅ 일치 개수별로 결과 분류할 딕셔너리 초기화
-        match_results = {i: [] for i in range(2, 7)}  # 2~6개 일치만 표시
-
-        # ✅ 조합 비교
+        match_results = {i: [] for i in range(2, 7)}
         for idx, combo in enumerate(st.session_state.combinations):
             match_count = sum(num in combo for num in fixed_numbers)
             if match_count in match_results:
                 round_no = df.iloc[idx]["회차"]
                 draw_date = df.iloc[idx]["추첨일"]
-                match_results[match_count].append((round_no, draw_date, combo))  # 회차, 날짜, 번호 리스트
+                match_results[match_count].append((round_no, draw_date, combo))
 
-        # ✅ 결과 출력
         found_any = False
         for match_count in sorted(match_results.keys(), reverse=True):
             matches = match_results[match_count]
             if matches:
                 found_any = True
                 st.subheader(f"🎯 {match_count}개 번호 일치 ({len(matches)}건)")
-
                 result_df = pd.DataFrame(
                     [[round_no, draw_date] + numbers for round_no, draw_date, numbers in matches],
                     columns=["회차", "추첨일"] + [f"번호 {i+1}" for i in range(6)]
                 )
-
-                # ✅ fixed_numbers 강조 적용
-                styled_df = result_df.style.applymap(highlight_matches, subset=[f"번호 {i+1}" for i in range(6)])
-
-                # ✅ 강조된 표 출력
+                styled_df = result_df.style.applymap(
+                    highlight_matches, subset=[f"번호 {i+1}" for i in range(6)]
+                )
                 st.dataframe(styled_df, use_container_width=True, hide_index=True)
-
 
         if not found_any:
             st.warning("2개 이상 일치하는 조합이 없습니다.")
 
 
+# ───────── 본문: 회귀수 결과 ─────────
+if st.session_state.get("show_mode") == "reg":
+    df = ensure_latest_df()
+    st.subheader("↩️ 회귀수 결과 (최근 10·20·30회)")
+    col10, col20, col30 = st.columns(3)
 
+    with col10:
+        st.markdown("**최근 10회**")
+        df10 = top_numbers_by_recent(df, 10)
+        st.dataframe(df10, use_container_width=True, hide_index=True)
 
+    with col20:
+        st.markdown("**최근 20회**")
+        df20 = top_numbers_by_recent(df, 20)
+        st.dataframe(df20, use_container_width=True, hide_index=True)
 
+    with col30:
+        st.markdown("**최근 30회**")
+        df30 = top_numbers_by_recent(df, 30)
+        st.dataframe(df30, use_container_width=True, hide_index=True)
