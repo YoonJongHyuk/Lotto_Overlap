@@ -107,6 +107,12 @@ st.set_page_config(page_title="로또 중복수 찾기", layout="wide")
 if 'combinations' not in st.session_state:
     st.session_state.combinations = []
 
+# ✅ 표시 모드와 회귀 N 기본값
+if 'show_mode' not in st.session_state:
+    st.session_state.show_mode = None
+if 'reg_n' not in st.session_state:
+    st.session_state.reg_n = None
+
 # ✅ 사이드바 내부 탭 UI
 with st.sidebar:
     st.header("현재 최신 회차")
@@ -121,13 +127,32 @@ with st.sidebar:
             # ▶ 중복수만 보이도록 모드 전환
             st.session_state.show_mode = "dup"
 
-    with tab_reg:
-        st.subheader("회귀수 분석")
-        st.caption("최근 10·20·30회에서 많이 나온 번호를 내림차순으로 보여줍니다.")
-        reg_button = st.button("회귀수 분석 실행", key="btn_reg_check")
-        if reg_button:
-            # ▶ 회귀수만 보이도록 모드 전환
-            st.session_state.show_mode = "reg"
+with tab_reg:
+    st.subheader("회귀수 분석")
+    st.caption("최근 N회(숫자) 기준으로 많이 나온 번호를 내림차순으로 보여줍니다.")
+
+    # ✅ 숫자 입력 (숫자만 받도록 number_input 사용)
+    reg_n_input = st.number_input(
+        "최근 N회 (양의 정수)", min_value=1, max_value=LAST_ROUND, step=1, key="reg_n_input"
+    )
+    reg_button = st.button("회귀수 구하기", key="btn_reg_check")
+
+    if reg_button:
+        # 입력값 확인
+        if reg_n_input is None:
+            st.warning("숫자를 입력하세요.")
+        else:
+            # 최신 데이터 확보 후 실제 보유 회차 수로 2차 검사
+            df_check = ensure_latest_df()
+            max_available = len(df_check)  # CSV에 저장된(업데이트된) 실제 회차 수
+
+            if reg_n_input > max_available:
+                st.warning(f"최근 N회 값이 너무 큽니다. (현재 보유 데이터: {max_available}회)")
+            else:
+                # ✅ 모드 전환 + 값 저장 → 본문에서 렌더링
+                st.session_state.reg_n = int(reg_n_input)
+                st.session_state.show_mode = "reg"
+
 
 
 
@@ -166,23 +191,18 @@ if st.session_state.get("show_mode") == "dup":
             st.warning("2개 이상 일치하는 조합이 없습니다.")
 
 
-# ───────── 본문: 회귀수 결과 ─────────
+# ───────── 본문: 회귀수 결과 (입력 N회) ─────────
 if st.session_state.get("show_mode") == "reg":
-    df = ensure_latest_df()
-    st.subheader("↩️ 회귀수 결과 (최근 10·20·30회)")
-    col10, col20, col30 = st.columns(3)
+    if not st.session_state.get("reg_n"):
+        st.warning("회귀수 N을 입력하고 버튼을 눌러주세요.")
+    else:
+        df = ensure_latest_df()
+        n = st.session_state.reg_n
+        st.subheader(f"↩️ 회귀수 결과 (최근 {n}회)")
 
-    with col10:
-        st.markdown("**최근 10회**")
-        df10 = top_numbers_by_recent(df, 10)
-        st.dataframe(df10, use_container_width=True, hide_index=True)
+        try:
+            dfN = top_numbers_by_recent(df, n)
+            st.dataframe(dfN, use_container_width=True, hide_index=True)
+        except Exception as e:
+            st.error(f"회귀수 계산 중 오류: {e}")
 
-    with col20:
-        st.markdown("**최근 20회**")
-        df20 = top_numbers_by_recent(df, 20)
-        st.dataframe(df20, use_container_width=True, hide_index=True)
-
-    with col30:
-        st.markdown("**최근 30회**")
-        df30 = top_numbers_by_recent(df, 30)
-        st.dataframe(df30, use_container_width=True, hide_index=True)
