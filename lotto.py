@@ -4,6 +4,7 @@ import requests
 import pandas as pd
 from bs4 import BeautifulSoup
 import os
+import altair as alt
 
 CSV_PATH = "lotto_data.csv"
 
@@ -97,6 +98,24 @@ def ensure_latest_df():
     df = update_latest_lotto_data(df)
     return df
 
+# ------------------- 최근 N회 끝수(0~9) 분포 계산 -------------------
+def last_digit_freq_by_recent(df: pd.DataFrame, recent_n: int) -> pd.DataFrame:
+    """
+    최근 recent_n 회차(최신 회차부터)에서 추출된 6개 번호들의 끝수(0~9) 빈도를 집계.
+    반환: index=끝수(0~9), columns=['count'] DataFrame
+    """
+    if df.empty or recent_n <= 0:
+        return pd.DataFrame({"count": [0]*10}, index=list(range(10)))
+
+    recent_df = df.sort_values("회차", ascending=False).head(recent_n)
+    # 번호1~번호6 펼치기
+    nums = recent_df[[f"번호{i}" for i in range(1, 7)]].values.ravel()
+    # 끝수 계산
+    tail = pd.Series(nums % 10, dtype="int64")
+    counts = tail.value_counts().reindex(range(10), fill_value=0).sort_index()
+    return counts.to_frame(name="count")
+
+
     
 # ------------------- Streamlit UI 시작 -------------------
 LAST_ROUND = get_latest_round_number()
@@ -112,13 +131,17 @@ if 'show_mode' not in st.session_state:
     st.session_state.show_mode = None
 if 'reg_n' not in st.session_state:
     st.session_state.reg_n = None
+# ✅ 끝수 분석용 최근 N 회
+if 'tail_n' not in st.session_state:
+    st.session_state.tail_n = None
 
 # ✅ 사이드바 내부 탭 UI
 with st.sidebar:
     st.header("현재 최신 회차")
     st.write(f"{LAST_ROUND}회차")
 
-    tab_dup, tab_reg = st.tabs(["🔁 중복수", "↩️ 회귀수"])
+    tab_dup, tab_reg, tab_tail = st.tabs(["🔁 중복수", "↩️ 회귀수", "🔟 끝수"])
+
 
     with tab_dup:
         fixed_numbers = st.multiselect("번호 선택", options=list(range(1, 46)), default=[])
@@ -127,31 +150,53 @@ with st.sidebar:
             # ▶ 중복수만 보이도록 모드 전환
             st.session_state.show_mode = "dup"
 
-with tab_reg:
-    st.subheader("회귀수 분석")
-    st.caption("최근 N회(숫자) 기준으로 많이 나온 번호를 내림차순으로 보여줍니다.")
+    with tab_reg:
+        st.subheader("회귀수 분석")
+        st.caption("최근 N회(숫자) 기준으로 많이 나온 번호를 내림차순으로 보여줍니다.")
 
-    # ✅ 숫자 입력 (숫자만 받도록 number_input 사용)
-    reg_n_input = st.number_input(
-        "최근 N회 (양의 정수)", min_value=1, max_value=LAST_ROUND, step=1, key="reg_n_input"
-    )
-    reg_button = st.button("회귀수 구하기", key="btn_reg_check")
+        # ✅ 숫자 입력 (숫자만 받도록 number_input 사용)
+        reg_n_input = st.number_input(
+            "최근 N회 (양의 정수)", min_value=1, max_value=LAST_ROUND, step=1, key="reg_n_input"
+        )
+        reg_button = st.button("회귀수 구하기", key="btn_reg_check")
 
-    if reg_button:
-        # 입력값 확인
-        if reg_n_input is None:
-            st.warning("숫자를 입력하세요.")
-        else:
-            # 최신 데이터 확보 후 실제 보유 회차 수로 2차 검사
-            df_check = ensure_latest_df()
-            max_available = len(df_check)  # CSV에 저장된(업데이트된) 실제 회차 수
-
-            if reg_n_input > max_available:
-                st.warning(f"최근 N회 값이 너무 큽니다. (현재 보유 데이터: {max_available}회)")
+        if reg_button:
+            # 입력값 확인
+            if reg_n_input is None:
+                st.warning("숫자를 입력하세요.")
             else:
-                # ✅ 모드 전환 + 값 저장 → 본문에서 렌더링
-                st.session_state.reg_n = int(reg_n_input)
-                st.session_state.show_mode = "reg"
+                # 최신 데이터 확보 후 실제 보유 회차 수로 2차 검사
+                df_check = ensure_latest_df()
+                max_available = len(df_check)  # CSV에 저장된(업데이트된) 실제 회차 수
+
+                if reg_n_input > max_available:
+                    st.warning(f"최근 N회 값이 너무 큽니다. (현재 보유 데이터: {max_available}회)")
+                else:
+                    # ✅ 모드 전환 + 값 저장 → 본문에서 렌더링
+                    st.session_state.reg_n = int(reg_n_input)
+                    st.session_state.show_mode = "reg"
+
+    with tab_tail:
+        st.subheader("끝수 분석 (0~9)")
+        st.caption("최근 N회(숫자)를 입력하면, 최신 회차부터 N회 내의 끝수(0~9) 빈도를 그래프로 보여줍니다.")
+
+        tail_n_input = st.number_input(
+            "최근 N회 (양의 정수)", min_value=1, max_value=LAST_ROUND, step=1, key="tail_n_input"
+        )
+        tail_button = st.button("끝수 분석 실행", key="btn_tail_check")
+
+        if tail_button:
+            if tail_n_input is None:
+                st.warning("숫자를 입력하세요.")
+            else:
+                df_check = ensure_latest_df()
+                max_available = len(df_check)  # CSV 내 보유된 실제 회차 수
+                if tail_n_input > max_available:
+                    st.warning(f"최근 N회 값이 너무 큽니다. (현재 보유 데이터: {max_available}회)")
+                else:
+                    st.session_state.tail_n = int(tail_n_input)
+                    st.session_state.show_mode = "tail"  # ▶ 본문 렌더링 전환
+
 
 
 
@@ -205,4 +250,59 @@ if st.session_state.get("show_mode") == "reg":
             st.dataframe(dfN, use_container_width=True, hide_index=True)
         except Exception as e:
             st.error(f"회귀수 계산 중 오류: {e}")
+
+
+
+# ───────── 본문: 끝수 결과 (입력 N회) ─────────
+if st.session_state.get("show_mode") == "tail":
+    if not st.session_state.get("tail_n"):
+        st.warning("끝수 N을 입력하고 버튼을 눌러주세요.")
+    else:
+        df = ensure_latest_df()
+        n = st.session_state.tail_n
+        st.subheader(f"🔟 끝수 분포 (최근 {n}회)")
+
+        try:
+            freq_df = last_digit_freq_by_recent(df, n).reset_index().rename(columns={"index": "끝수"})
+
+            # 🎯 최빈값 계산
+            max_count = freq_df["count"].max()
+            top_tails = freq_df.loc[freq_df["count"] == max_count, "끝수"].tolist()
+            tails_str = ", ".join(str(t) for t in top_tails)
+
+
+
+
+            base = alt.Chart(freq_df).encode(
+                x=alt.X("끝수:O", title="끝수 (0~9)", axis=alt.Axis(labelAngle=0)),
+                y=alt.Y("count:Q", title="출현 횟수"),
+                tooltip=["끝수", "count"]
+            )
+
+
+            bars = base.mark_bar(color="#66b3ff")
+
+            # ✅ 막대 바닥(y=0 근처)에 count 표시
+            text_inside_bottom = (
+                alt.Chart(freq_df)
+                .mark_text(
+                    dy=-10,           # 막대 안에서 아래로 조금 내림
+                    fontSize=11,
+                    color="#ffffff"   # 막대 내부라 흰색 추천
+                )
+                .encode(
+                    x=alt.X("끝수:O"),
+                    y=alt.Y("count:Q"),   # y값을 count로 맞춰서 막대 높이 따라감
+                    text="count:Q"
+                )
+            )
+
+            chart = (bars + text_inside_bottom).properties(height=400)
+            st.altair_chart(chart, use_container_width=True)
+
+
+
+        except Exception as e:
+            st.error(f"끝수 계산 중 오류: {e}")
+
 
