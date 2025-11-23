@@ -402,9 +402,9 @@ if st.session_state.get("show_mode") == "tail":
     # ✅ 여기에서 표를 그려주기만 하면 됨
     st.dataframe(styled, use_container_width=True, hide_index=True)
 
-    st.markdown("### 🎱 최근 10회 당첨 번호")
+    st.markdown(f"### 🎱 최근 {n}회 당첨 번호")
 
-    recent_rows = df.sort_values("회차", ascending=False).head(10)
+    recent_rows = df.sort_values("회차", ascending=False).head(n)
 
     for _, r in recent_rows.iterrows():
         render_round_balls(r)   # 함수 내부에서 이미 st.markdown(html, ...) 호출
