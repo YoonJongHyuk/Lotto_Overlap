@@ -1,5 +1,6 @@
 # ------------------- 라이브러리 임포트 -------------------
 import streamlit as st
+import streamlit.components.v1 as components
 import requests
 import pandas as pd
 from bs4 import BeautifulSoup
@@ -98,7 +99,9 @@ def ensure_latest_df():
     df = update_latest_lotto_data(df)
     return df
 
-# ------------------- 최근 N회 끝수(0~9) 분포 계산 -------------------
+# ================== 🔟 끝수 분석 관련 함수들 ==================
+
+# 최근 N회 끝수(0~9) 전체 빈도 (필요하면 그래프용으로 사용)
 def last_digit_freq_by_recent(df: pd.DataFrame, recent_n: int) -> pd.DataFrame:
     """
     최근 recent_n 회차(최신 회차부터)에서 추출된 6개 번호들의 끝수(0~9) 빈도를 집계.
@@ -108,12 +111,146 @@ def last_digit_freq_by_recent(df: pd.DataFrame, recent_n: int) -> pd.DataFrame:
         return pd.DataFrame({"count": [0]*10}, index=list(range(10)))
 
     recent_df = df.sort_values("회차", ascending=False).head(recent_n)
-    # 번호1~번호6 펼치기
     nums = recent_df[[f"번호{i}" for i in range(1, 7)]].values.ravel()
-    # 끝수 계산
+
     tail = pd.Series(nums % 10, dtype="int64")
     counts = tail.value_counts().reindex(range(10), fill_value=0).sort_index()
     return counts.to_frame(name="count")
+
+
+# 최근 N회 회차별 끝수 분포표 + 끝수합
+def last_digit_matrix_by_recent(df: pd.DataFrame, recent_n: int) -> pd.DataFrame:
+    """
+    최근 N회(최신 회차부터) 각 회차별 끝수(0~9) 분포를 표로 반환.
+    셀 값: 해당 회차에서 끝수가 몇 번 등장했는지 (0~6)
+    '끝수합': 그 회차에서 한 번이라도 나온 끝수들의 합
+             예) 0,1,2,4,5,6 이 나오면 0+1+2+4+5+6 = 18
+    """
+    if df.empty or recent_n <= 0:
+        return pd.DataFrame()
+
+    recent_df = df.sort_values("회차", ascending=False).head(recent_n)
+    rows = []
+
+    for _, row in recent_df.iterrows():
+        nums = [row[f"번호{i}"] for i in range(1, 7)]
+        tails = [n % 10 for n in nums]
+
+        # 각 끝수별 등장 횟수
+        counts = {t: tails.count(t) for t in range(10)}
+
+        # 끝수합: 한 번이라도 나온 끝수들의 자리값 합
+        tail_sum = sum(t for t, cnt in counts.items() if cnt > 0)
+
+        row_data = {"회차": int(row["회차"])}
+        row_data.update(counts)      
+        row_data["끝수합"] = tail_sum
+        rows.append(row_data)
+
+    out = pd.DataFrame(rows)
+    out = out.sort_values("회차", ascending=False).reset_index(drop=True)
+    return out
+
+
+def style_tail(df: pd.DataFrame):
+    digit_cols = [c for c in df.columns if isinstance(c, int)]
+
+    styler = (
+        df.style
+        # ✅ 전체 배경 흰색 고정
+        .set_properties(
+            **{
+                "background-color": "white",
+                "color": "black",
+            }
+        )
+        # ✅ 끝수 셀만 초록 그라데이션 적용
+        .background_gradient(
+            axis=None,
+            cmap="Greens",
+            subset=digit_cols
+        )
+        # ✅ 숫자 표시 (0은 빈칸)
+        .format(
+            lambda v: "" if v == 0 else str(v),
+            subset=digit_cols
+        )
+        # ✅ 끝수합은 검정 텍스트 + 연한 회색 배경
+        .set_properties(
+            subset=["끝수합"],
+            **{
+                "background-color": "#f2f2f2",
+                "color": "black",
+                "font-weight": "bold",
+            }
+        )
+        # ✅ 표 스타일 정리
+        .set_properties(
+            **{
+                "text-align": "center",
+                "padding": "6px",
+                "border": "1px solid #ddd",
+            }
+        )
+    )
+
+    return styler
+
+# ------------------- 로또 공 색상 함수 -------------------
+def get_ball_color(num: int) -> str:
+    """로또 번호 색상 (국민로또 기준)"""
+    if 1 <= num <= 10:
+        return "#FBC400"  # 노랑
+    elif 11 <= num <= 20:
+        return "#69C8F2"  # 파랑
+    elif 21 <= num <= 30:
+        return "#FF7272"  # 빨강
+    elif 31 <= num <= 40:
+        return "#AAAAAA"  # 회색
+    elif 41 <= num <= 45:
+        return "#B0D840"  # 초록
+    else:
+        return "#FFFFFF"  # 예외
+
+# ------------------- 회차별 로또볼 렌더링 -------------------
+def render_round_balls(row):
+    main_nums = [int(row[f"번호{i}"]) for i in range(1, 7)]
+
+    def ball_html(n: int) -> str:
+        color = get_ball_color(n)
+        return f"""
+        <div style="
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background-color: {color};
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-size: 14px;
+            color: #ffffff;
+        ">{n}</div>
+        """
+
+    balls_html = "".join(ball_html(n) for n in main_nums)
+
+    html = f"""
+    <div style="
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin-bottom: 8px;
+    ">
+        <div style="width: 60px; font-weight: 600; text-align: right;">
+            {int(row['회차'])}회
+        </div>
+        {balls_html}
+    </div>
+    """
+
+    components.html(html, height=50)
+
 
 
     
@@ -251,58 +388,27 @@ if st.session_state.get("show_mode") == "reg":
         except Exception as e:
             st.error(f"회귀수 계산 중 오류: {e}")
 
+# ================== 🔟 끝수 분석: 본문 출력 ==================
 
-
-# ───────── 본문: 끝수 결과 (입력 N회) ─────────
 if st.session_state.get("show_mode") == "tail":
-    if not st.session_state.get("tail_n"):
-        st.warning("끝수 N을 입력하고 버튼을 눌러주세요.")
-    else:
-        df = ensure_latest_df()
-        n = st.session_state.tail_n
-        st.subheader(f"🔟 끝수 분포 (최근 {n}회)")
+    df = ensure_latest_df()
+    n = st.session_state.tail_n
 
-        try:
-            freq_df = last_digit_freq_by_recent(df, n).reset_index().rename(columns={"index": "끝수"})
+    st.subheader(f"🔟 끝수 분포 (최근 {n}회)")
 
-            # 🎯 최빈값 계산
-            max_count = freq_df["count"].max()
-            top_tails = freq_df.loc[freq_df["count"] == max_count, "끝수"].tolist()
-            tails_str = ", ".join(str(t) for t in top_tails)
+    matrix_df = last_digit_matrix_by_recent(df, n)
+    styled = style_tail(matrix_df)
 
+    # ✅ 여기에서 표를 그려주기만 하면 됨
+    st.dataframe(styled, use_container_width=True, hide_index=True)
 
+    st.markdown("### 🎱 최근 10회 당첨 번호")
 
+    recent_rows = df.sort_values("회차", ascending=False).head(10)
 
-            base = alt.Chart(freq_df).encode(
-                x=alt.X("끝수:O", title="끝수 (0~9)", axis=alt.Axis(labelAngle=0)),
-                y=alt.Y("count:Q", title="출현 횟수"),
-                tooltip=["끝수", "count"]
-            )
+    for _, r in recent_rows.iterrows():
+        render_round_balls(r)   # 함수 내부에서 이미 st.markdown(html, ...) 호출
 
 
-            bars = base.mark_bar(color="#66b3ff")
-
-            # ✅ 막대 바닥(y=0 근처)에 count 표시
-            text_inside_bottom = (
-                alt.Chart(freq_df)
-                .mark_text(
-                    dy=-10,           # 막대 안에서 아래로 조금 내림
-                    fontSize=11,
-                    color="#ffffff"   # 막대 내부라 흰색 추천
-                )
-                .encode(
-                    x=alt.X("끝수:O"),
-                    y=alt.Y("count:Q"),   # y값을 count로 맞춰서 막대 높이 따라감
-                    text="count:Q"
-                )
-            )
-
-            chart = (bars + text_inside_bottom).properties(height=400)
-            st.altair_chart(chart, use_container_width=True)
-
-
-
-        except Exception as e:
-            st.error(f"끝수 계산 중 오류: {e}")
 
 
